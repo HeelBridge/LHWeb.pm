@@ -16,7 +16,7 @@ use Data::Dumper;
 
 
 
-my $LHWeb_sets="";
+my $LHWeb_sets="Reconnect";
 my $LHWeb_gets="Channels";
 
 sub LHWeb_Initialize($) {
@@ -42,6 +42,8 @@ sub LHWeb_Initialize($) {
 
 }
 
+
+
 sub LHWeb_Define($$) {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
@@ -59,9 +61,7 @@ sub LHWeb_Define($$) {
     $hash->{channel} = $param[3];
 
     $ret = DevIo_OpenDev($hash, 0, "LHWeb_Init");
-    Log 4, "LHWwbHub_Define: ret=$ret";
-    
-    LHWeb_SimpleWrite($hash, "channel ".$hash->{channel});
+    Log 4, "LHWeb_Define: ret=$ret";
 
     readingsSingleUpdate ( $hash, "state", "defined", 1 );
 
@@ -76,9 +76,6 @@ sub LHWeb_SimpleWrite(@)
   return if(!$hash);
 
   Log 4, "LHWeb_SimpleWrite: ".$msg;
-  #Log 4, Dumper($hash);
-
-  my $name = $hash->{NAME};
 
   syswrite($hash->{TCPDev}, $msg);
 
@@ -89,12 +86,14 @@ sub LHWeb_SimpleWrite(@)
 
 
 sub LHWeb_Init(){
-  my $hash = shift;
-  my $name = $hash->{NAME};
+    my $hash = shift;
+    my $name = $hash->{NAME};
 
-  Log 4, "LHWeb_Init";
+    Log 4, "LHWeb_Init";
 
-  LHWeb_SimpleWrite($hash, "V\n");
+    LHWeb_SimpleWrite($hash, "version");
+    sleep(1);
+    LHWeb_SimpleWrite($hash, "channel ".$hash->{channel});
 }
 
 
@@ -125,11 +124,13 @@ sub LHWeb_Read($){
         if($val1 eq "channel"){
             $new_sets.=$val3." ";
         }
+    }elsif($val1 eq "version"){
+        $hash->{version}=$val2." ".$val3;
     }
   }
   
   if($new_sets ne ""){
-    $LHWeb_sets=$new_sets;
+    $LHWeb_sets=$new_sets."Reconnect";
   }
     
 }
@@ -191,12 +192,12 @@ sub LHWeb_Set($@) {
 	my @sets=split(/ /,$LHWeb_sets);
 	
 	Log 4, "LHWeb_set: name=$name, opt=$opt, value=$value";
-
-        Log 4, grep( /^$opt$/, @sets );
 	
-	my @sets=split(/ /,$LHWeb_sets);
 	if($opt eq "?"){
 	    return "Unknown argument $opt, choose one of ".$LHWeb_sets;
+        }elsif($opt eq "Reconnect"){
+            LHWeb_Reopen($hash);
+            return undef;
 	}elsif(grep( /^$opt$/, @sets )){
 	    LHWeb_SetState($hash, $opt);
 	    return undef;
@@ -221,6 +222,13 @@ sub LHWeb_Attr(@) {
 		}
 	}
 	return undef;
+}
+
+
+sub LHWeb_Reopen($){
+  my ($hash) = @_;
+  DevIo_CloseDev($hash);
+  DevIo_OpenDev($hash, 1, "LHWeb_Init");
 }
 
 1;
