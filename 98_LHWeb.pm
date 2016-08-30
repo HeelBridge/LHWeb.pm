@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Data::Dumper;
 
+
 #my %LHWeb_gets = (
 #	"Test"		=> "getTest"
 #	"whatyouneed"	=> "try sometimes",
@@ -27,7 +28,7 @@ sub LHWeb_Initialize($) {
 
     $hash->{ReadFn}  = "LHWeb_Read";
     $hash->{WriteFn} = "LHWeb_Write";
-#    $hash->{ReadyFn} = "LHWeb_Ready";
+    $hash->{ReadyFn} = "LHWeb_Ready";
 
     $hash->{DefFn}      = 'LHWeb_Define';
     $hash->{UndefFn}    = 'LHWeb_Undef';
@@ -44,12 +45,19 @@ sub LHWeb_Initialize($) {
 
 
 
+sub LHWeb_Ready($){
+    my ($hash) = @_;
+    
+    Log3 $hash,  4, "LHWeb_Ready";
+}
+
+
 sub LHWeb_Define($$) {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
     my $ret = "";
     
-    Log 3, "LHWeb_Define";
+    Log3 $hash,  4, "LHWeb_Define";
 
     if(int(@param) < 4) {
         return "too few parameters: define <name> LHWeb <ip-address> <channel>";
@@ -61,11 +69,33 @@ sub LHWeb_Define($$) {
     $hash->{channel} = $param[3];
 
     $ret = DevIo_OpenDev($hash, 0, "LHWeb_Init");
-    Log 4, "LHWeb_Define: ret=$ret";
+    Log3 $hash,  4, "LHWeb_Define ret=$ret";
 
-    readingsSingleUpdate ( $hash, "state", "defined", 1 );
+    #readingsSingleUpdate ( $hash, "state", "defined", 1 );
+    
+    InternalTimer(gettimeofday()+61, "LHWeb_Ping", $hash, 0);
+    readingsSingleUpdate ( $hash, ".lastMessage", gettimeofday(), 0 );
 
     return $ret;
+}
+
+sub LHWeb_Ping($){
+    my ($hash) = @_;
+
+    my $lastMsg=ReadingsVal($hash->{NAME}, ".lastMessage", "0");
+    my $blackout=gettimeofday()-$lastMsg;
+    Log3 $hash, 4, "LHWeb_Ping: LastMsg=".$lastMsg;
+    Log3 $hash, 4, "LHWeb_Ping: LastMsg=".(gettimeofday()-$lastMsg);
+
+    if($blackout > 240){
+        Log3 $hash, 4, "LHWeb_Ping: Connection timed out. Reconnecting..";
+        LHWeb_Reopen($hash);
+    }elsif($blackout>120){
+        Log3 $hash, 4, "LHWeb_Ping: No answer from device for more than 2min. Stale connection?";
+    }else{
+        LHWeb_SimpleWrite($hash, "version");
+    }
+    InternalTimer(gettimeofday()+61, "LHWeb_Ping", $hash, 0);
 }
 
 
@@ -75,7 +105,7 @@ sub LHWeb_SimpleWrite(@)
   my ($hash, $msg) = @_;
   return if(!$hash);
 
-  Log 4, "LHWeb_SimpleWrite: ".$msg;
+  Log3 $hash,  4, "LHWeb_SimpleWrite msg=".$msg;
 
   syswrite($hash->{TCPDev}, $msg);
 
@@ -89,7 +119,7 @@ sub LHWeb_Init(){
     my $hash = shift;
     my $name = $hash->{NAME};
 
-    Log 4, "LHWeb_Init";
+    Log3 $hash,  4, "LHWeb_Init";
 
     LHWeb_SimpleWrite($hash, "version");
     sleep(1);
@@ -102,10 +132,10 @@ sub LHWeb_Read($){
 
   my $new_sets="";
   
-  Log 4, "LHWeb_Read";
+  Log3 $hash,  4, "LHWeb_Read";
         
   my $buf = DevIo_SimpleRead($hash);
-  Log 4, "Buf=$buf";
+  Log3 $hash,  4, "LHWeb_Read: buf=$buf";
   
 
   return "" if(!defined($buf));
@@ -115,7 +145,7 @@ sub LHWeb_Read($){
 
     my($val1, $val2, $val3)=split(' ', $line);    
     
-    Log 4, "vals: $val1, $val2, $val3";
+    Log3 $hash,  4, "LHWeb_Read: val1=$val1 val2=$val2 val3=$val3";
 
     if($val2 eq $hash->{channel}){
         if($val1 eq "state"){
@@ -127,7 +157,14 @@ sub LHWeb_Read($){
     }elsif($val1 eq "version"){
         $hash->{version}=$val2." ".$val3;
     }
+
+    if($val1 ne ""){
+        readingsSingleUpdate ( $hash, ".lastMessage", gettimeofday(), 0 );
+    }
+    
+    
   }
+  
   
   if($new_sets ne ""){
     $LHWeb_sets=$new_sets."Reconnect";
@@ -139,7 +176,7 @@ sub LHWeb_Read($){
 sub LHWeb_Write($$$){
   my ($hash,$fn,$msg) = @_;
   
-  Log 4, "LHWeb_Write";
+  Log3 $hash,  4, "LHWeb_Write";
 
 } 
 
@@ -152,10 +189,10 @@ sub LHWeb_Undef($$) {
 }
 
 sub LHWeb_SetState(@){
-  my ($hash, $val) = @_;
+  my ($hash, $opt, $val) = @_;
 
-  LHWeb_SimpleWrite($hash, "set ".$hash->{channel}." $val\n");
-  readingsSingleUpdate ( $hash, "state", "set-$val", 1 );
+  LHWeb_SimpleWrite($hash, "set ".$hash->{channel}." $opt $val\n");
+  readingsSingleUpdate ( $hash, "state", "set-$opt", 1 );
 }
 
 sub LHWeb_Get($@) {
@@ -166,7 +203,7 @@ sub LHWeb_Get($@) {
 	my $name = shift @param;
 	my $opt = shift @param;
     
-	Log 4, "LHWeb_get: name=$name, opt=$opt";
+	Log3 $hash,  4, "LHWeb_get: name=$name opt=$opt";
 
 	if($opt eq "Channels"){
 	    LHWeb_SimpleWrite($hash, "channel ".$hash->{channel}."\n");
@@ -191,7 +228,7 @@ sub LHWeb_Set($@) {
 	
 	my @sets=split(/ /,$LHWeb_sets);
 	
-	Log 4, "LHWeb_set: name=$name, opt=$opt, value=$value";
+	Log3 $hash,  4, "LHWeb_set: name=$name opt=$opt value=$value";
 	
 	if($opt eq "?"){
 	    return "Unknown argument $opt, choose one of ".$LHWeb_sets;
@@ -199,7 +236,7 @@ sub LHWeb_Set($@) {
             LHWeb_Reopen($hash);
             return undef;
 	}elsif(grep( /^$opt$/, @sets )){
-	    LHWeb_SetState($hash, $opt);
+	    LHWeb_SetState($hash, $opt, $value);
 	    return undef;
 	}else{
 	    return "Unknown argument $opt, choose one of ".$LHWeb_sets;
@@ -211,15 +248,15 @@ sub LHWeb_Set($@) {
 sub LHWeb_Attr(@) {
 	my ($cmd,$name,$attr_name,$attr_value) = @_;
 	if($cmd eq "set") {
-        if($attr_name eq "formal") {
-			if($attr_value !~ /^yes|no$/) {
-			    my $err = "Invalid argument $attr_value to $attr_name. Must be yes or no.";
-			    Log 3, "Hello: ".$err;
-			    return $err;
-			}
-		} else {
-		    #return "Unknown attr $attr_name";
-		}
+        #if($attr_name eq "formal") {
+	#		if($attr_value !~ /^yes|no$/) {
+	#		    my $err = "Invalid argument $attr_value to $attr_name. Must be yes or no.";
+	#		    Log3 $hash,  3, "Hello: ".$err;
+	#		    return $err;
+	#		}
+	#	} else {
+	#	    #return "Unknown attr $attr_name";
+	#	}
 	}
 	return undef;
 }
