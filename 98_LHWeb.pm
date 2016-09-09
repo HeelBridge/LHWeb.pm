@@ -49,6 +49,10 @@ sub LHWeb_Ready($){
     my ($hash) = @_;
     
     Log3 $hash,  4, "LHWeb_Ready";
+
+    if(!$hash){ return 0; }
+    if(!$hash->{TCPDev}){ return 0; }
+    return 1;
 }
 
 
@@ -69,7 +73,7 @@ sub LHWeb_Define($$) {
     $hash->{channel} = $param[3];
 
     $ret = DevIo_OpenDev($hash, 0, "LHWeb_Init");
-    Log3 $hash,  4, "LHWeb_Define ret=$ret";
+    if($ret){ Log3 $hash,  4, "LHWeb_Define ret=$ret"; }
 
     #readingsSingleUpdate ( $hash, "state", "defined", 1 );
     
@@ -105,6 +109,17 @@ sub LHWeb_SimpleWrite(@)
   my ($hash, $msg) = @_;
   return if(!$hash);
 
+
+
+  if(!$hash->{TCPDev}){
+    Log3 $hash, 3, "LHWeb_SimpleWrite: No TCP device found";
+    if($hash->{cl} && $hash->{asyncCmd} && $hash->{asyncCmd} ne ""){
+        asyncOutput( $hash->{cl}, "Error:\nDevice is not connected.\nCommand cannot be executed!" );
+    }
+
+    return 0;
+  }
+
   Log3 $hash,  4, "LHWeb_SimpleWrite msg=".$msg;
 
   syswrite($hash->{TCPDev}, $msg);
@@ -131,11 +146,14 @@ sub LHWeb_Read($){
   my ($hash) = @_;
 
   my $new_sets="";
+  my $async_ret="";
   
   Log3 $hash,  4, "LHWeb_Read";
         
   my $buf = DevIo_SimpleRead($hash);
-  Log3 $hash,  4, "LHWeb_Read: buf=$buf";
+  my $buf_clean=$buf;
+  $buf_clean =~ s/\n/\\n/g;
+  Log3 $hash,  4, "LHWeb_Read: buf=".$buf_clean;
   
 
   return "" if(!defined($buf));
@@ -144,7 +162,11 @@ sub LHWeb_Read($){
   foreach my $line (split('\n', $buf)) {
 
     my($val1, $val2, $val3)=split(' ', $line);    
-    
+
+    $val1="" if(!$val1);    
+    $val2="" if(!$val2);    
+    $val3="" if(!$val3);    
+
     Log3 $hash,  4, "LHWeb_Read: val1=$val1 val2=$val2 val3=$val3";
 
     if($val2 eq $hash->{channel}){
@@ -152,7 +174,10 @@ sub LHWeb_Read($){
             readingsSingleUpdate ( $hash, "state", $val3, 1 );
         }
         if($val1 eq "channel"){
-            $new_sets.=$val3." ";
+            if($val3){ $new_sets.=$val3." "; }
+            if($hash->{asyncCmd} and $hash->{asyncCmd} eq "channels"){
+                $async_ret.=$val2."\n";
+            }
         }
     }elsif($val1 eq "version"){
         $hash->{version}=$val2." ".$val3;
@@ -170,6 +195,12 @@ sub LHWeb_Read($){
     $LHWeb_sets=$new_sets."Reconnect";
   }
     
+
+  if($hash->{cl} && $hash->{asyncCmd} && $hash->{asyncCmd} ne ""){
+    asyncOutput( $hash->{cl}, $async_ret );
+  }
+  undef $hash->{asyncCmd};
+
 }
 
 
@@ -206,7 +237,12 @@ sub LHWeb_Get($@) {
 	Log3 $hash,  4, "LHWeb_get: name=$name opt=$opt";
 
 	if($opt eq "Channels"){
-	    LHWeb_SimpleWrite($hash, "channel ".$hash->{channel}."\n");
+	    LHWeb_SimpleWrite($hash, "channel\n");
+	    if($hash->{CL} && $hash->{CL}->{canAsyncOutput} ){
+	        Log3 $hash, 4, "LHWeb_get: starting aysync get";
+	        $hash->{cl}=$hash->{CL};
+	        $hash->{asyncCmd}="channels";
+	    }
 	    return undef;
 	}elsif($opt eq "?"){
 	    return "Unknown argument $opt, choose one of ".$LHWeb_gets;
@@ -276,8 +312,25 @@ sub LHWeb_Reopen($){
 <a name="LHWeb"></a>
 <h3>LHWeb</h3>
 <ul>
-    <i>LHWeb</i> manages the network connections to and from all LHWeb devices. It acts kind of like a CUL or JeeLink.<br>
-    For each individual LHWeb device you also need to define a seperate LHWeb in fhem.
+    The <i>LHWeb</i> lets you easily include ESP8266 devices which use the LHWeb library into fhem.
+    <br><br>
+    The LHWeb library for the ESP8266 module handles most, if not all, of web server handling so you 
+    can concentrate on the pure logic of your project. It also includes interfaces to control the
+    module via serial line and TCP sockets. The LHWeb fhem module uses those sockets to talk to
+    and control the ESP8266.
+    <br><br>
+    <a name="LHWebdefine"></a>
+    <b>Define</a>
+    <ul>
+      <code>define &lt;name&gt; LHWeb &lt;address&gt; &lt;channel&gt;</code>
+      <ul>
+        <li><code>&lt;address&gt;</code><br>The IP-address of the running module</li>
+        <li><code>&lt;channel&gt;</code><br>The channel on the ESP you want to use. Which channels are available depends 
+        on the program running on the ESP.</li>
+      </ul>
+      <br><br>      
+      Example: <code>define wifi_light 192.168.0.10 lamp</code>
+   </ul>
 </ul>
 
 =end html
