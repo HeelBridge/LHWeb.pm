@@ -23,6 +23,8 @@ my $LHWeb_gets="Channels";
 sub LHWeb_Initialize($) {
     my ($hash) = @_;
 
+    Log3 $hash,  4, "LHWeb_Initialize";
+
     require "$attr{global}{modpath}/FHEM/DevIo.pm";
 
 
@@ -36,6 +38,7 @@ sub LHWeb_Initialize($) {
     $hash->{GetFn}      = 'LHWeb_Get';
     $hash->{AttrFn}     = 'LHWeb_Attr';
     $hash->{ReadFn}     = 'LHWeb_Read';
+    $hash->{ShutdownFn} = 'LHWeb_Shutdown';
 
     $hash->{AttrList} =
           "Test "
@@ -66,18 +69,20 @@ sub LHWeb_Define($$) {
     if(int(@param) < 4) {
         return "too few parameters: define <name> LHWeb <ip-address> <channel>";
     }
+
     
     $hash->{name} = $param[0];
     $hash->{port} = 23;    
     $hash->{DeviceName} = $param[2].":23";
     $hash->{channel} = $param[3];
 
+
     $ret = DevIo_OpenDev($hash, 0, "LHWeb_Init");
     if($ret){ Log3 $hash,  4, "LHWeb_Define ret=$ret"; }
 
     #readingsSingleUpdate ( $hash, "state", "defined", 1 );
     
-    InternalTimer(gettimeofday()+61, "LHWeb_Ping", $hash, 0);
+    InternalTimer(gettimeofday()+31, "LHWeb_Ping", $hash, 0);
     readingsSingleUpdate ( $hash, ".lastMessage", gettimeofday(), 0 );
 
     return $ret;
@@ -97,9 +102,9 @@ sub LHWeb_Ping($){
     }elsif($blackout>120){
         Log3 $hash, 4, "LHWeb_Ping: No answer from device for more than 2min. Stale connection?";
     }else{
-        LHWeb_SimpleWrite($hash, "version");
+        LHWeb_SimpleWrite($hash, "rssi");
     }
-    InternalTimer(gettimeofday()+61, "LHWeb_Ping", $hash, 0);
+    InternalTimer(gettimeofday()+30, "LHWeb_Ping", $hash, 0);
 }
 
 
@@ -138,6 +143,8 @@ sub LHWeb_Init(){
 
     LHWeb_SimpleWrite($hash, "version");
     sleep(1);
+    LHWeb_SimpleWrite($hash, "rssi");
+    sleep(1);
     LHWeb_SimpleWrite($hash, "channel ".$hash->{channel});
 }
 
@@ -151,6 +158,7 @@ sub LHWeb_Read($){
   Log3 $hash,  4, "LHWeb_Read";
         
   my $buf = DevIo_SimpleRead($hash);
+  if(!$buf){ $buf=""; }
   my $buf_clean=$buf;
   $buf_clean =~ s/\n/\\n/g;
   Log3 $hash,  4, "LHWeb_Read: buf=".$buf_clean;
@@ -180,7 +188,10 @@ sub LHWeb_Read($){
             }
         }
     }elsif($val1 eq "version"){
-        $hash->{version}=$val2." ".$val3;
+        #$hash->{version}=$val2." ".$val3;
+        readingsSingleUpdate ( $hash, "version", $val2." ".$val3, 1 );
+    }elsif($val1 eq "rssi"){
+        $hash->{RSSI} = $val2;
     }
 
     if($val1 ne ""){
@@ -215,8 +226,12 @@ sub LHWeb_Write($$$){
 
 sub LHWeb_Undef($$) {
     my ($hash, $arg) = @_; 
-    # nothing to do
-    return undef;
+
+    Log3 $hash,  4, "LHWeb_Undef";
+
+    DevIo_CloseDev($hash);
+
+    return 1;
 }
 
 sub LHWeb_SetState(@){
@@ -300,9 +315,26 @@ sub LHWeb_Attr(@) {
 
 sub LHWeb_Reopen($){
   my ($hash) = @_;
+
+  Log3 $hash,  4, "LHWeb_Reopen";
+
   DevIo_CloseDev($hash);
   DevIo_OpenDev($hash, 1, "LHWeb_Init");
 }
+
+
+sub LHWeb_Shutdown($)
+{
+    my ($hash) = @_;
+
+    Log3 $hash,  4, "LHWeb_Shutdown";
+
+    DevIo_CloseDev($hash);
+    return undef;
+}
+
+
+
 
 1;
 
